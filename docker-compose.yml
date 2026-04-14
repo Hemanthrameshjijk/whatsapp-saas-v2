@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  # ─────────────────────────────────────────
+  # PostgreSQL 15
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsappai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: whatsappai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d whatsappai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Redis 7
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: whatsappai-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Qdrant Vector DB (REST port 6334)
+  # ─────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: whatsappai-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # gRPC
+      - "6334:6334"   # REST HTTP (used by app)
+    volumes:
+      - qdrantdata:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6334
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6334/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Ollama (LLM + Embeddings)
+  # ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: whatsappai-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Ollama Model Puller (runs once on startup)
+  # Pulls llama3.2:1b and nomic-embed-text
+  # ─────────────────────────────────────────
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: whatsappai-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: >
+      /bin/sh -c "
+        echo '>>> Pulling llama3.2:1b ...';
+        ollama pull llama3.2:1b;
+        echo '>>> Pulling nomic-embed-text ...';
+        ollama pull nomic-embed-text;
+        echo '>>> All models ready!';
+      "
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
+  qdrantdata:
+  ollamadata:
